@@ -3,10 +3,12 @@ import time
 import threading
 import requests as rest
 import DeepHubClasses as dh
-
+import random
+import websocket
 
 # The URL at which the DeepHub is running. Adjust this accordingly if running the DeepHub at some other URL.
 url = 'http://localhost:8081/deephub/v1'
+wsurl = 'ws://localhost:8081/deephub/v1'
 
 # A constant to improve readability of the code
 REVERSE = True
@@ -16,6 +18,7 @@ zone_foreign_id = 'mathematikon.example1.zone'
 
 # The id of the location provider of the example's truck.
 provider_id_truck = 'TRUCK_GPS_HARDWARE_ID'
+provider_id_truck2 = 'TRUCK_GPS_HARDWARE_ID2'
 
 # The ids of the location providers of the example's forklift.
 provider_id_forklift_gps = 'FORKLIFT_GPS_HARDWARE_ID'
@@ -40,6 +43,7 @@ def main():
     # Run the example in a loop.
     print('Running the example loop.')
     while True:
+
         # The pallet is loaded onto the truck, which then drives off.
         attach_trackable_to_provider(provider_id_truck)
         time.sleep(1)
@@ -47,6 +51,11 @@ def main():
                                         args=[provider_id_truck, 'gps',
                                               'truckGpsCoordinates.txt'],
                                         daemon=True)
+
+        truck_thread2 = threading.Thread(target=send_location_updates_fakedata,
+                                        args=[provider_id_truck2, 'gps'],
+                                        daemon=True)
+
         # The forklift drives to the delivery area.
         fork_gps_thread = threading.Thread(target=send_location_updates,
                                            args=[provider_id_forklift_gps, 'gps',
@@ -59,11 +68,13 @@ def main():
         fork_gps_thread.start()
         fork_uwb_thread.start()
         truck_thread.start()
+        truck_thread2.start()
 
         # Wait for both vehicles to finish their current movement.
         fork_gps_thread.join()
         fork_uwb_thread.join()
         truck_thread.join()
+        truck_thread2.join()
 
         # The forklift loads the pallet and drives to the drop off point.
         attach_trackable_to_provider(provider_id_forklift_uwb)
@@ -81,15 +92,24 @@ def main():
                                         args=[provider_id_truck, 'gps',
                                               'truckGpsCoordinates.txt', REVERSE],
                                         daemon=True)
+        # truck_thread2 = threading.Thread(target=send_location_updates_fakedata,
+        #                                 args=[provider_id_truck2, 'gps'],
+        #                                 daemon=True)
+
         fork_gps_thread.start()
         fork_uwb_thread.start()
         truck_thread.start()
+        # truck_thread2.start()
+
+        delete_provider(url, provider_id_truck2)
 
         # Wait for both vehicles to finish their current movement.
         fork_gps_thread.join()
         fork_uwb_thread.join()
         truck_thread.join()
+        # truck_thread2.join()
 
+        setup()
 
 #
 # Check whether a DeepHub instance is available at the given URL.
@@ -109,11 +129,11 @@ def setup():
     global trackable_url
 
     # Check whether the example's entities exist already.
-    if len(rest.get(url + '/zones' + '?foreign_id=' + zone_foreign_id).json()) > 0:
-        print('Found an example zone. Using existing setup.')
-        trackable_id_pallet = rest.get(url + '/trackables').json()[0]
-        trackable_url = url + '/trackables/' + trackable_id_pallet
-        return
+    # if len(rest.get(url + '/zones' + '?foreign_id=' + zone_foreign_id).json()) > 0:
+    #     print('Found an example zone. Using existing setup.')
+    #     trackable_id_pallet = rest.get(url + '/trackables').json()[0]
+    #     trackable_url = url + '/trackables/' + trackable_id_pallet
+    #     return
 
     # Setup the example's zone.
     zone = dh.Zone()
@@ -126,6 +146,11 @@ def setup():
     delivery_fence.name = 'Delivery'
     rest.post(url + '/fences', delivery_fence.to_json())
 
+    print('Making a new fence')
+    new_fence = dh.Fence(region=dh.Polygon1())
+    new_fence.name = 'NewFence'
+    rest.post(url + '/fences', new_fence.to_json())
+
     drop_fence = dh.Fence(region=dh.Point())
     drop_fence.name = 'Drop'
     drop_fence.radius = 2
@@ -136,6 +161,11 @@ def setup():
     provider_truck_gps.name = 'Truck GPS'
     provider_truck_gps.type = 'gps'
     rest.post(url + '/providers', provider_truck_gps.to_json())
+
+    provider_truck_gps2 = dh.LocationProvider(id=provider_id_truck2)
+    provider_truck_gps2.name = 'Truck GPS2'
+    provider_truck_gps2.type = 'gps'
+    rest.post(url + '/providers', provider_truck_gps2.to_json())
 
     provider_forklift_gps = dh.LocationProvider(id=provider_id_forklift_gps)
     provider_forklift_gps.name = 'Forklift GPS'
@@ -176,6 +206,32 @@ def send_location_updates(provider_id: str, provider_type: str, file: str, rever
             rest.put(url + '/providers/locations', location.to_json_list())
             time.sleep(0.05)
 
+
+def generate_coordinates():
+    longitude = 8.676234 + random.uniform(-0.00001, 0.00001)
+    latitude = 49.415941 + random.uniform(-0.00001, 0.00001)
+    return [longitude, latitude]
+
+
+def send_location_updates_fakedata(provider_id: str, provider_type: str):
+    location = dh.Location(provider_id=provider_id,
+                           provider_type=provider_type)
+    if provider_type == 'gps':
+        location.crs = 'EPSG:4326'
+    else:
+        location.source = zone_foreign_id
+
+    for i in range(234):
+        coordinates = generate_coordinates()
+        location.position = dh.Point(coordinates=coordinates)
+        rest.put(url + '/providers/locations', location.to_json_list())
+        time.sleep(0.05)
+
+
+def delete_provider(url: str, provider_id: str):
+    endpoint = '/providers/' + provider_id
+    print('url to delete', url + endpoint)
+    response = rest.delete(url + endpoint)
 
 #
 # Update the pallet trackable such that it is attached to the provider with the given id.
