@@ -4,11 +4,12 @@ import threading
 import requests as rest
 import DeepHubClasses as dh
 import random
+import math
+import datetime
 import websocket
 
 # The URL at which the DeepHub is running. Adjust this accordingly if running the DeepHub at some other URL.
 url = 'http://localhost:8081/deephub/v1'
-wsurl = 'ws://localhost:8081/deephub/v1'
 
 # A constant to improve readability of the code
 REVERSE = True
@@ -18,7 +19,7 @@ zone_foreign_id = 'mathematikon.example1.zone'
 
 # The id of the location provider of the example's truck.
 provider_id_truck = 'TRUCK_GPS_HARDWARE_ID'
-provider_id_truck2 = 'TRUCK_GPS_HARDWARE_ID2'
+provider_id_truck2 = 'ACCURO_THEIA_HARDWARE_ID'
 
 # The ids of the location providers of the example's forklift.
 provider_id_forklift_gps = 'FORKLIFT_GPS_HARDWARE_ID'
@@ -101,7 +102,11 @@ def main():
         truck_thread.start()
         # truck_thread2.start()
 
-        delete_provider(url, provider_id_truck2)
+        expiration_time = 0.1
+        response = get_provider_location(url, provider_id_truck2)
+        tf = check_expiration(response, expiration_time)
+        if tf:
+            delete_provider(url, provider_id_truck2)
 
         # Wait for both vehicles to finish their current movement.
         fork_gps_thread.join()
@@ -163,7 +168,7 @@ def setup():
     rest.post(url + '/providers', provider_truck_gps.to_json())
 
     provider_truck_gps2 = dh.LocationProvider(id=provider_id_truck2)
-    provider_truck_gps2.name = 'Truck GPS2'
+    provider_truck_gps2.name = 'Accuro'
     provider_truck_gps2.type = 'gps'
     rest.post(url + '/providers', provider_truck_gps2.to_json())
 
@@ -208,9 +213,50 @@ def send_location_updates(provider_id: str, provider_type: str, file: str, rever
 
 
 def generate_coordinates():
+    # Centergy -84.389556, 33.777556
     longitude = 8.676234 + random.uniform(-0.00001, 0.00001)
     latitude = 49.415941 + random.uniform(-0.00001, 0.00001)
     return [longitude, latitude]
+
+
+# define a function that takes lo, la, xm, and ym as input and returns lot and lat as output
+def convert_location_in_wgs(lo, la, xm, ym):
+    # define WGS84 constants
+    a = 6378137.0  # semi-major axis in meters
+    f = 1.0 / 298.257223563  # flattening
+    b = a - f * a  # semi-minor axis in meters
+    e = math.sqrt((a ** 2 - b ** 2) / a ** 2)  # eccentricity
+
+    # convert lo and la from degrees to radians
+    lo_rad = math.radians(lo)
+    la_rad = math.radians(la)
+
+    # convert lo, la, and h (assumed to be zero) to ECEF coordinates (x, y, z)
+    N = a / math.sqrt(1 - e ** 2 * math.sin(la_rad) ** 2)  # prime vertical radius of curvature
+    x = (N + 0) * math.cos(la_rad) * math.cos(lo_rad)  # x coordinate in meters
+    y = (N + 0) * math.cos(la_rad) * math.sin(lo_rad)  # y coordinate in meters
+    z = (N * (1 - e ** 2) + 0) * math.sin(la_rad)  # z coordinate in meters
+
+    # add xm and ym to x and y to get the ECEF coordinates of the target (xt, yt, zt)
+    xt = x + xm
+    yt = y + ym
+    zt = z  # assume no change in height
+
+    # convert xt, yt, and zt to geodetic coordinates (lt_rad, ln_rad, ht)
+    p = math.sqrt(xt ** 2 + yt ** 2)  # distance from z-axis
+    theta = math.atan2(zt * a, p * b)  # auxiliary angle
+    lt_rad = math.atan2(zt + e ** 2 * b * math.sin(theta) ** 3,
+                        p - e ** 2 * a * math.cos(theta) ** 3)  # latitude in radians
+    ln_rad = math.atan2(yt, xt)  # longitude in radians
+    Nt = a / math.sqrt(1 - e ** 2 * math.sin(lt_rad) ** 2)  # prime vertical radius of curvature at target
+    ht = p / math.cos(lt_rad) - Nt  # height in meters
+
+    # convert lt_rad and ln_rad from radians to degrees
+    lot = math.degrees(ln_rad)  # longitude in degrees
+    lat = math.degrees(lt_rad)  # latitude in degrees
+
+    # return lot and lat as output
+    return [lot, lat]
 
 
 def send_location_updates_fakedata(provider_id: str, provider_type: str):
@@ -221,17 +267,42 @@ def send_location_updates_fakedata(provider_id: str, provider_type: str):
     else:
         location.source = zone_foreign_id
 
-    for i in range(234):
-        coordinates = generate_coordinates()
+    n = 250
+    r = 10
+    for i in range(n):
+        # coordinates = generate_coordinates()
+        x, y = calculate_coordinates(r, n, i)
+        coordinates = convert_location_in_wgs(-84.389556, 33.778000, x, y)
         location.position = dh.Point(coordinates=coordinates)
         rest.put(url + '/providers/locations', location.to_json_list())
         time.sleep(0.05)
+        response = get_provider_location(url, provider_id)
+        print_coordinate(response)
 
 
 def delete_provider(url: str, provider_id: str):
     endpoint = '/providers/' + provider_id
-    print('url to delete', url + endpoint)
+    # print('url to delete', url + endpoint)
+    print('delete', provider_id)
     response = rest.delete(url + endpoint)
+
+
+def get_provider_location(url: str, provider_id: str):
+    endpoint = '/providers/' + provider_id + '/location/'
+    print('get the location of:', provider_id)
+    response = rest.get(url + endpoint)
+    return response
+
+
+# define a function that takes response as input and prints the coordinates
+def print_coordinate(response):
+    # assume response is a variable that stores the response object
+    data = response.json()  # parse the response object to a Python object
+    position = data["position"]  # get the position dictionary from the data
+    coordinates = position["coordinates"]  # get the coordinates list from the position
+    latitude = coordinates[0]  # get the first element of the list
+    longitude = coordinates[1]  # get the second element of the list
+    print("Longitude, Latitude:", longitude, latitude)
 
 #
 # Update the pallet trackable such that it is attached to the provider with the given id.
@@ -241,6 +312,42 @@ def attach_trackable_to_provider(provider_id: str):
     trackable_pallet.location_providers = [provider_id]
     rest.put(trackable_url, trackable_pallet.to_json())
 
+
+# define a function that takes r, cx, cy, and n as input and returns x and y as output
+def calculate_coordinates(r, n, i):
+    # calculate the angle increment for each step
+    angle_increment = 2 * math.pi / n
+    # calculate the angle for the current step
+    angle = i * angle_increment
+    # subtract the angle from 2 * math.pi to rotate clockwise
+    angle = 2 * math.pi - angle
+    # calculate the x and y coordinates using the parametric equations
+    x = r * math.cos(angle)
+    y = r * math.sin(angle)
+    # print("x, y:", x, y)
+    return x, y
+
+def check_expiration(response, expiration_time):
+    data = response.json()  # parse the response object to a Python object
+    # get the timestamp_generated from the response
+    timestamp = data["timestamp_generated"]
+    # parse the timestamp string to a datetime object
+    timestamp = datetime.datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+    # get the current time in UTC
+    current_time = datetime.datetime.utcnow()
+
+    print("timestamp, current time:",timestamp, current_time)
+    # calculate the difference between current time and timestamp
+    difference = current_time - timestamp
+    # convert expiration_time from seconds to a timedelta object
+    expiration_time = datetime.timedelta(seconds=expiration_time)
+    # compare the difference with expiration_time
+    if difference > expiration_time:
+        # return True if difference is greater than expiration_time
+        return True
+    else:
+        # return False otherwise
+        return False
 
 if __name__ == "__main__":
     try:
