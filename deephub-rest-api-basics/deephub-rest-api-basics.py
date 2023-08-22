@@ -6,7 +6,6 @@ import DeepHubClasses as dh
 import random
 import math
 import datetime
-import pyproj
 import matplotlib.pyplot as plt
 import websocket
 
@@ -20,12 +19,8 @@ REVERSE = True
 zone_foreign_id = 'mathematikon.example1.zone'
 
 # The id of the location provider of the example's truck.
-provider_id_truck = 'TRUCK_GPS_HARDWARE_ID'
-provider_id_truck2 = 'ACCURO_THEIA_HARDWARE_ID'
-
-# The ids of the location providers of the example's forklift.
-provider_id_forklift_gps = 'FORKLIFT_GPS_HARDWARE_ID'
-provider_id_forklift_uwb = 'FORKLIFT_UWB_TAG_ID'
+# provider_id_truck = 'TRUCK_GPS_HARDWARE_ID'
+provider_id_accuro = 'ACCURO_THEIA_HARDWARE_ID'
 
 # The URL to access the example's trackable. This requires the UUID of the trackable found in the DeepHub and is set during setup.
 trackable_url: str
@@ -39,7 +34,7 @@ def main():
 
     def thread_function():
         nonlocal stored_coordinates
-        stored_coordinates = (send_location_updates_fakedata(provider_id_truck2, 'gps'))
+        stored_coordinates = (send_location_updates_fakedata(provider_id_accuro, 'gps'))
 
     # Confirm that the DeepHub can be contacted.
     if not is_healthy():
@@ -54,40 +49,21 @@ def main():
     while True:
 
         # The pallet is loaded onto the truck, which then drives off.
-        attach_trackable_to_provider(provider_id_truck)
-        time.sleep(1)
-        truck_thread = threading.Thread(target=send_location_updates,
-                                        args=[provider_id_truck, 'gps',
-                                              'truckGpsCoordinates.txt'],
-                                        daemon=True)
+        # attach_trackable_to_provider(provider_id_truck)
+        # time.sleep(1)
 
-        # truck_thread2 = threading.Thread(target=send_location_updates_fakedata,
-        #                                 args=[provider_id_truck2, 'gps'],
+        # accuro_thread = threading.Thread(target=send_location_updates_2Ddata,
+        #                                 args=[provider_id_accuro, 'gps'],
         #                                 daemon=True)
-        truck_thread2 = threading.Thread(target=thread_function, daemon=True)
+        accuro_thread = threading.Thread(target=thread_function, daemon=True)
 
-        # The forklift drives to the delivery area.
-        fork_gps_thread = threading.Thread(target=send_location_updates,
-                                           args=[provider_id_forklift_gps, 'gps',
-                                                 'forkliftGpsCoordinates.txt'],
-                                           daemon=True)
-        fork_uwb_thread = threading.Thread(target=send_location_updates,
-                                           args=[provider_id_forklift_uwb, 'uwb',
-                                                 'forkliftUwbCoordinates.txt'],
-                                           daemon=True)
-        fork_gps_thread.start()
-        fork_uwb_thread.start()
-        truck_thread.start()
-        truck_thread2.start()
+        accuro_thread.start()
 
         # Wait for both vehicles to finish their current movement.
-        fork_gps_thread.join()
-        fork_uwb_thread.join()
-        truck_thread.join()
-        truck_thread2.join()
+        accuro_thread.join()
 
-        # ### Plot for debug ###
-        # # Extract longitude and latitude values from stored_coordinates
+        ### Plot for debug ###
+        # Extract longitude and latitude values from stored_coordinates
         # longitudes, latitudes = zip(*stored_coordinates)
         #
         # # Create a scatter plot of the coordinates
@@ -99,43 +75,11 @@ def main():
         # plt.grid(True)
         # plt.show()
 
-        # The forklift loads the pallet and drives to the drop off point.
-        attach_trackable_to_provider(provider_id_forklift_uwb)
-        time.sleep(1)
-        fork_gps_thread = threading.Thread(target=send_location_updates,
-                                           args=[provider_id_forklift_gps, 'gps',
-                                                 'forkliftGpsCoordinates.txt', REVERSE],
-                                           daemon=True)
-        fork_uwb_thread = threading.Thread(target=send_location_updates,
-                                           args=[provider_id_forklift_uwb, 'uwb',
-                                                 'forkliftUwbCoordinates.txt', REVERSE],
-                                           daemon=True)
-        # The truck drives back to the drop off point.
-        truck_thread = threading.Thread(target=send_location_updates,
-                                        args=[provider_id_truck, 'gps',
-                                              'truckGpsCoordinates.txt', REVERSE],
-                                        daemon=True)
-        # truck_thread2 = threading.Thread(target=send_location_updates_fakedata,
-        #                                 args=[provider_id_truck2, 'gps'],
-        #                                 daemon=True)
-
-        fork_gps_thread.start()
-        fork_uwb_thread.start()
-        truck_thread.start()
-        # truck_thread2.start()
-
-
         expiration_time = 60
-        response = get_provider_location(url, provider_id_truck2)
+        response = get_provider_location(url, provider_id_accuro)
         tf = check_expiration(response, expiration_time)
         if tf:
-            delete_provider(url, provider_id_truck2)
-
-        # Wait for both vehicles to finish their current movement.
-        fork_gps_thread.join()
-        fork_uwb_thread.join()
-        truck_thread.join()
-        # truck_thread2.join()
+            delete_provider(url, provider_id_accuro)
 
         setup()
 
@@ -157,11 +101,11 @@ def setup():
     global trackable_url
 
     # Check whether the example's entities exist already.
-    if len(rest.get(url + '/zones' + '?foreign_id=' + zone_foreign_id).json()) > 0:
-        print('Found an example zone. Using existing setup.')
-        trackable_id_pallet = rest.get(url + '/trackables').json()[0]
-        trackable_url = url + '/trackables/' + trackable_id_pallet
-        return
+    # if len(rest.get(url + '/zones' + '?foreign_id=' + zone_foreign_id).json()) > 0:
+    #     print('Found an example zone. Using existing setup.')
+    #     trackable_id_pallet = rest.get(url + '/trackables').json()[0]
+    #     trackable_url = url + '/trackables/' + trackable_id_pallet
+    #     return
 
     # Setup the example's zone.
     zone = dh.Zone()
@@ -184,36 +128,10 @@ def setup():
     drop_fence.radius = 2
     rest.post(url + '/fences', drop_fence.to_json())
 
-    # Setup the example's providers for the truck and forklift.
-    provider_truck_gps = dh.LocationProvider(id=provider_id_truck)
-    provider_truck_gps.name = 'Truck GPS'
-    provider_truck_gps.type = 'gps'
-    rest.post(url + '/providers', provider_truck_gps.to_json())
-
-    provider_truck_gps2 = dh.LocationProvider(id=provider_id_truck2)
+    provider_truck_gps2 = dh.LocationProvider(id=provider_id_accuro)
     provider_truck_gps2.name = 'Accuro'
     provider_truck_gps2.type = 'gps'
     rest.post(url + '/providers', provider_truck_gps2.to_json())
-
-    provider_forklift_gps = dh.LocationProvider(id=provider_id_forklift_gps)
-    provider_forklift_gps.name = 'Forklift GPS'
-    provider_forklift_gps.type = 'gps'
-    rest.post(url + '/providers', provider_forklift_gps.to_json())
-
-    provider_forklift_uwb = dh.LocationProvider(id=provider_id_forklift_uwb)
-    provider_forklift_uwb.name = 'Forklift UWB'
-    provider_forklift_uwb.type = 'uwb'
-    rest.post(url + '/providers', provider_forklift_uwb.to_json())
-
-    # Setup the example's trackable.
-    trackable_pallet = dh.Trackable()
-    trackable_pallet.name = 'Pallet'
-    trackable_pallet.radius = 1
-    response = rest.post(url + '/trackables', trackable_pallet.to_json())
-    # Obtain the trackables UUID from the response.
-    trackable_id_pallet = response.json()['id']
-    trackable_url = url + '/trackables/' + trackable_id_pallet
-
 
 
 #
@@ -242,81 +160,11 @@ def generate_coordinates():
     latitude = 49.415941 + random.uniform(-0.00001, 0.00001)
     return [longitude, latitude]
 
-
-# define a function that takes lo, la, xm, and ym as input and returns lot and lat as output
-# def convert_location_in_wgs(lo, la, xm, ym):
-#     # define WGS84 constants
-#     a = 6378137.0  # semi-major axis in meters
-#     f = 1.0 / 298.257223563  # flattening
-#     b = a - f * a  # semi-minor axis in meters
-#     e = math.sqrt((a ** 2 - b ** 2) / a ** 2)  # eccentricity
-#
-#     # convert lo and la from degrees to radians
-#     lo_rad = math.radians(lo)
-#     la_rad = math.radians(la)
-#
-#     # convert lo, la, and h (assumed to be zero) to ECEF coordinates (x, y, z)
-#     N = a / math.sqrt(1 - e ** 2 * math.sin(la_rad) ** 2)  # prime vertical radius of curvature
-#     x = (N + 0) * math.cos(la_rad) * math.cos(lo_rad)  # x coordinate in meters
-#     y = (N + 0) * math.cos(la_rad) * math.sin(lo_rad)  # y coordinate in meters
-#     z = (N * (1 - e ** 2) + 0) * math.sin(la_rad)  # z coordinate in meters
-#
-#     # add xm and ym to x and y to get the ECEF coordinates of the target (xt, yt, zt)
-#     xt = x + xm
-#     yt = y + ym
-#     zt = z  # assume no change in height
-#
-#     # convert xt, yt, and zt to geodetic coordinates (lt_rad, ln_rad, ht)
-#     p = math.sqrt(xt ** 2 + yt ** 2)  # distance from z-axis
-#     theta = math.atan2(zt * a, p * b)  # auxiliary angle
-#     lt_rad = math.atan2(zt + e ** 2 * b * math.sin(theta) ** 3,
-#                         p - e ** 2 * a * math.cos(theta) ** 3)  # latitude in radians
-#     ln_rad = math.atan2(yt, xt)  # longitude in radians
-#     Nt = a / math.sqrt(1 - e ** 2 * math.sin(lt_rad) ** 2)  # prime vertical radius of curvature at target
-#     ht = p / math.cos(lt_rad) - Nt  # height in meters
-#
-#     # convert lt_rad and ln_rad from radians to degrees
-#     lot = math.degrees(ln_rad)  # longitude in degrees
-#     lat = math.degrees(lt_rad)  # latitude in degrees
-#
-#     # return lot and lat as output
-#     return [lot, lat]
-
-
 def convert_location_in_wgs(lo, la, xm, ym):
     # Define WGS84 constants
-    a = 6378137.0  # semi-major axis in meters
-    f = 1.0 / 298.257223563  # flattening
-    b = a - f * a  # semi-minor axis in meters
-    e = math.sqrt((a ** 2 - b ** 2) / a ** 2)  # eccentricity
-
-    # Convert lo and la from degrees to radians
-    lo_rad = math.radians(lo)
-    la_rad = math.radians(la)
-
-    # Convert lo, la, and h (assumed to be zero) to ECEF coordinates (x, y, z)
-    N = a / math.sqrt(1 - e ** 2 * math.sin(la_rad) ** 2)  # prime vertical radius of curvature
-    x = (N + 0) * math.cos(la_rad) * math.cos(lo_rad)  # x coordinate in meters
-    y = (N + 0) * math.cos(la_rad) * math.sin(lo_rad)  # y coordinate in meters
-    z = (N * (1 - e ** 2) + 0) * math.sin(la_rad)  # z coordinate in meters
-
-    # Convert xm and ym to ECEF coordinates (xe, ye, ze)
-    xe = x + xm
-    ye = y + ym
-    ze = z  # assume no change in height
-
-    # Convert xe, ye, and ze to geodetic coordinates (lt_rad, ln_rad, ht)
-    p = math.sqrt(xe ** 2 + ye ** 2)  # distance from z-axis
-    theta = math.atan2(ze * a, p * b)  # auxiliary angle
-    lt_rad = math.atan2(ze + e ** 2 * b * math.sin(theta) ** 3,
-                        p - e ** 2 * a * math.cos(theta) ** 3)  # latitude in radians
-    ln_rad = math.atan2(ye, xe)  # longitude in radians
-    Nt = a / math.sqrt(1 - e ** 2 * math.sin(lt_rad) ** 2)  # prime vertical radius of curvature at target
-    ht = p / math.cos(lt_rad) - Nt  # height in meters
-
-    # Convert lt_rad and ln_rad from radians to degrees
-    lot = math.degrees(ln_rad)  # longitude in degrees
-    lat = math.degrees(lt_rad)  # latitude in degrees
+    r_earth = 6378137.0  # semi-major axis in meters
+    lat = la + (xm / r_earth) * (180 / math.pi)
+    lot = lo + (ym / r_earth) * (180 / math.pi) / math.cos(la * (math.pi / 180));
 
     # Return lot and lat as output
     return [lot, lat]
@@ -331,12 +179,14 @@ def send_location_updates_fakedata(provider_id: str, provider_type: str):
         location.source = zone_foreign_id
 
     n = 250
-    r = 10
+    r = 2
+    lo = -83.049500
+    la =  42.327081
     stored_coordinates = []
     for i in range(n):
         # coordinates = generate_coordinates()
         x, y = calculate_coordinates(r, n, i)
-        coordinates = convert_location_in_wgs(-84.389556, 33.778000, x, y)
+        coordinates = convert_location_in_wgs(lo, la, x, y)
         stored_coordinates.append(coordinates)  # Store the coordinates
         location.position = dh.Point(coordinates=coordinates)
         rest.put(url + '/providers/locations', location.to_json_list())
@@ -345,6 +195,21 @@ def send_location_updates_fakedata(provider_id: str, provider_type: str):
         print_coordinate(response)
 
     return stored_coordinates
+
+def send_location_updates_2Ddata(provider_id: str, provider_type: str, lo, la, xm, ym):
+    location = dh.Location(provider_id=provider_id,
+                           provider_type=provider_type)
+    if provider_type == 'gps':
+        location.crs = 'EPSG:4326'
+    else:
+        location.source = zone_foreign_id
+
+    coordinates = convert_location_in_wgs(lo, la, xm, ym)
+    location.position = dh.Point(coordinates=coordinates)
+    rest.put(url + '/providers/locations', location.to_json_list())
+    time.sleep(0.05)
+    response = get_provider_location(url, provider_id)
+    print_coordinate(response)
 
 def delete_provider(url: str, provider_id: str):
     endpoint = '/providers/' + provider_id
